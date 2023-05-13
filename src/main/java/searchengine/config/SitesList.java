@@ -13,4 +13,11 @@ import java.util.List;
 @ConfigurationProperties(prefix = "indexing-settings")
 public class SitesList {
     private List<Site> sites;
+
+    @Override
+    public String toString() {
+        return "SitesList{" +
+                "sites=" + sites +
+                '}';
+    }
 }
