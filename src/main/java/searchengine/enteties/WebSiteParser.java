@@ -4,71 +4,80 @@ import org.apache.lucene.morphology.LuceneMorphology;
 import org.apache.lucene.morphology.russian.RussianLuceneMorphology;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
-import org.springframework.beans.factory.annotation.Autowired;
-import searchengine.models.HtmlInfo;
+import searchengine.models.IndexModel;
 import searchengine.models.LemmaModel;
-import searchengine.repositories.HtmlRepository;
+import searchengine.models.PageModel;
+import searchengine.repositories.IndexRepository;
 import searchengine.repositories.LemmaRepository;
 import searchengine.repositories.PageRepository;
 
+import javax.persistence.NonUniqueResultException;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.RecursiveAction;
 
-//@Service
 public class WebSiteParser extends RecursiveAction {
     public static Set<String> links = Collections.synchronizedSet(new HashSet<>());
     private final int webSiteId;
     private final String webSiteName;
     private final String suffix;
-    private String htmlText;
-    @Autowired
-    private PageRepository pageRepository;
-    @Autowired
-    private LemmaRepository lemmaRepository;
-    @Autowired
-    private HtmlRepository htmlRepository;
+    private final PageRepository pageRepository;
+    private final LemmaRepository lemmaRepository;
+    private final IndexRepository indexRepository;
 
+    public WebSiteParser(int webSiteId,
+                         String webSiteName,
+                         String suffix,
+                         PageRepository pageRepository,
+                         LemmaRepository lemmaRepository,
+                         IndexRepository indexRepository
+    ) {
+        if (webSiteName.endsWith("/")) {
+            webSiteName = webSiteName.substring(0, webSiteName.length() - 1);
+        }
 
-    public WebSiteParser(int webSiteId, String webSiteName, String suffix) {
         this.webSiteId = webSiteId;
         this.webSiteName = webSiteName.replaceAll("//www\\.", "//");
         this.suffix = suffix;
+        this.pageRepository = pageRepository;
+        this.lemmaRepository = lemmaRepository;
+        this.indexRepository = indexRepository;
     }
 
     @Override
     public void compute() {
-        List<HtmlInfo> htmlInfoList = htmlRepository.findAll();
-        try {
-            for (HtmlInfo htmlInfo : htmlInfoList) {
-                String text = htmlInfo.getHtmlText();
-                saveLemmas(text);
-            }
-
-            List<LemmaModel> lemmaModelList = lemmaRepository.findAll();
-
-            lemmaModelList.forEach(System.out::println);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+//        List<HtmlInfo> htmlInfoList = htmlRepository.findAll();
 //        try {
-//            List<WebSiteParser> taskList = getTaskList();
-//
-//            int taskListSize = taskList.size() - 1;
-//            for (int i = taskListSize; i >= 0; i--) {
-//                WebSiteParser parser = taskList.get(i);
-//                parser.join();
-//                PageModel pageModel = new PageModel(webSiteId, suffix, 200, parser.htmlText);
-//                pageRepository.saveAndFlush(pageModel);
+//            for (HtmlInfo htmlInfo : htmlInfoList) {
+//                String text = htmlInfo.getHtmlText();
+//                saveLemmas(text);
 //            }
+//
+//            List<LemmaModel> lemmaModelList = lemmaRepository.findAll();
+//
+//            lemmaModelList.forEach(System.out::println);
 //        } catch (IOException e) {
-//            System.out.println(e.getMessage());
+//            throw new RuntimeException(e);
 //        }
+        try {
+            System.out.println(webSiteName.concat(suffix));
+
+            List<WebSiteParser> taskList = getTaskList();
+
+            int taskListSize = taskList.size() - 1;
+            for (int i = taskListSize; i >= 0; i--) {
+//                System.out.println(i);
+                WebSiteParser parser = taskList.get(i);
+                parser.join();
+            }
+        } catch (IOException e) {
+            System.out.println(e.getMessage());
+        }
     }
 
     private Elements getLinkElements(Document document) {
-        System.out.println(webSiteName.concat(suffix));
         return document.select("a");
     }
 
@@ -77,52 +86,83 @@ public class WebSiteParser extends RecursiveAction {
 
         Document document = getDocument();
         Elements elements = getLinkElements(document);
-        String fullLink = webSiteName.concat(suffix);
-        saveLemmas(getText());
+        String content = document.text();
 
-        elements.stream()
-                .map(element -> changeReservedCharacters(element.attr("href")))
-                .filter(suffix -> linkSuffixFilter(suffix) && !links.contains(fullLink))
-                .forEach(currSuffix -> {
-                    links.add(fullLink);
+        if (!content.isBlank()) {
+            PageModel pageModel = new PageModel(webSiteId, suffix, 200, content);
+            PageModel savedPageModel = pageRepository.saveAndFlush(pageModel);
+            saveLemmas(content, savedPageModel.getId());
 
-                    WebSiteParser parser = new WebSiteParser(webSiteId, webSiteName, currSuffix);
-                    parser.fork();
-                    taskList.add(parser);
-                });
+            // TODO : Можно ли использовать просто save ???
+            //  Почему то он не сохраняет все страницы
+        }
+
+        for (Element element : elements) {
+            String currSuffix = changeReservedCharacters(element.attr("href"));
+            String fullLink = webSiteName.concat(currSuffix);
+            if (linkSuffixFilter(currSuffix) && !links.contains(fullLink)) {
+                links.add(fullLink);
+
+                WebSiteParser parser = new WebSiteParser(
+                        webSiteId,
+                        webSiteName,
+                        currSuffix,
+                        pageRepository,
+                        lemmaRepository,
+                        indexRepository
+                );
+                parser.fork();
+                taskList.add(parser);
+            }
+        }
 
         return taskList;
     }
 
-    private void saveLemmas(String text) throws IOException {
+    private void saveLemmas(String text, int pageId) throws IOException {
         LuceneMorphology luceneMorphRus = new RussianLuceneMorphology();
         LuceneMorphology luceneMorphEng = new RussianLuceneMorphology();
 
-        String[] words = text.replaceAll("[^a-zA-Z\\-\\s]", "").split("\\s+");
+        String[] words = text.replaceAll("[^а-яА-ЯёЁa-zA-Z\\s]", " ").split("\\s+");
+        Set<String> wordSet = new HashSet<>(List.of(words));
 
-        HashSet<String> lemmasSet = new HashSet<>();
-        for (String word : words) {
+        HashMap<String, Integer> lemmaToCnt = new HashMap<>();
+        List<String> lemmas = new ArrayList<>();
+        for (String word : wordSet) {
             if (luceneMorphEng.checkString(word)) {
-                List<String> lemmas = luceneMorphEng.getNormalForms(word);
-                lemmasSet.addAll(lemmas);
+                lemmas = luceneMorphEng.getNormalForms(word);
             } else if (luceneMorphRus.checkString(word)) {
-                List<String> lemmas = luceneMorphRus.getNormalForms(word);
-                lemmasSet.addAll(lemmas);
+                lemmas = luceneMorphRus.getNormalForms(word);
             }
+
+            lemmas.forEach(lemma -> lemmaToCnt.put(
+                    lemma,
+                    lemmaToCnt.containsKey(lemma) ? lemmaToCnt.get(lemma) + 1 : 1
+            ));
         }
 
-        for (String lemma : lemmasSet) {
-            Optional<LemmaModel> lemmaModelOptional = lemmaRepository.findByLemma(lemma);
-            if (lemmaModelOptional.isPresent()) {
-                lemmaRepository.updateFrequencyById(lemmaModelOptional.get().getId());
-            } else {
-                lemmaRepository.saveAndFlush(new LemmaModel(webSiteId, lemma, 1));
-            }
-        }
-    }
+        try {
+            for (Map.Entry<String, Integer> entry : lemmaToCnt.entrySet()) {
+                String lemma = entry.getKey();
+                Integer cnt = entry.getValue();
 
-    private String getText() throws IOException {
-        return getDocument().text();
+                Optional<LemmaModel> lemmaModelOptional = lemmaRepository.findByLemma(lemma);
+                int lemmaId;
+                if (lemmaModelOptional.isPresent()) {
+                    lemmaId = lemmaModelOptional.get().getId();
+                    lemmaRepository.updateFrequencyById(lemmaId);
+                } else {
+                    LemmaModel saveLemmaModel = lemmaRepository.saveAndFlush(
+                            new LemmaModel(webSiteId, lemma, 1)
+                    );
+                    lemmaId = saveLemmaModel.getId();
+                }
+
+                indexRepository.saveAndFlush(new IndexModel(pageId, lemmaId, cnt));
+            }
+        } catch (NonUniqueResultException e) {
+            e.printStackTrace();
+        }
     }
 
     private Document getDocument() throws IOException {
@@ -130,7 +170,7 @@ public class WebSiteParser extends RecursiveAction {
                 .ignoreHttpErrors(true)
                 .followRedirects(true)
                 .ignoreContentType(true)
-                .timeout(5_000)
+                .timeout(10_000)
                 .get();
     }
 

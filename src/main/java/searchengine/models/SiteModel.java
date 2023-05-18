@@ -15,7 +15,7 @@ import java.sql.Date;
 public class SiteModel {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Integer id;
+    private int id;
     @Enumerated(EnumType.STRING)
     @Column(columnDefinition = "enum")
     private SiteStatus status;

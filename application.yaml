@@ -1,10 +1,10 @@
 server:
-port: 8080
+  port: 8081
 spring:
   datasource:
     username: root
     password: testtest
-    url: jdbc:mysql://localhost:3306/search?useSSL=false&requireSSL=false&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://localhost:3306/search_engine?useSSL=false&requireSSL=false&allowPublicKeyRetrieval=true
   jpa:
     properties:
       hibernate:
@@ -16,14 +16,14 @@ spring:
 # WebSites
 indexing-settings:
   sites:
-#    - url: https://stackoverflow.com/
-#      name: Stack
     - url: https://www.skillbox.ru
       name: Skillbox
-#    - url: https://www.playback.ru
-#      name: PlayBack.Ru
-#    - url: https://www.avito.ru/
-#      name: Avito
+    - url: https://gb.ru/
+      name: GeekBrains
+    - url: https://academy.yandex.ru/
+      name: Yandex Academy
+    - url: https://practicum.yandex.ru/
+      name: Yandex Practicum
 
 
 

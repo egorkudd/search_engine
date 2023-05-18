@@ -12,7 +12,7 @@ import javax.persistence.*;
 public class PageModel {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Integer id;
+    private int id;
     @Column(name = "site_id")
     private int siteId;
     private String path;
